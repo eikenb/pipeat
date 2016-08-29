@@ -41,23 +41,23 @@ func newPipeFile() (*pipeFile, error) {
 		return nil, err
 	}
 	os.Remove(file.Name())
-	b := &pipeFile{File: file, eof: make(chan struct{})}
-	b.L = b // Cond locker
-	return b, nil
+	f := &pipeFile{File: file, eof: make(chan struct{})}
+	f.L = f // Cond locker
+	return f, nil
 }
 
-func (b *pipeFile) readable(start, end int64) bool {
-	return (start+end < b.endln)
+func (f *pipeFile) readable(start, end int64) bool {
+	return (start+end < f.endln)
 }
 
 // io.WriterAt side of pipe.
 type PipeWriterAt struct {
-	b *pipeFile
+	f *pipeFile
 }
 
 // io.ReaderAt side of pipe.
 type PipeReaderAt struct {
-	b *pipeFile
+	f *pipeFile
 }
 
 // Pipe creates an asynchronous file based pipe. It can be used to connect code
@@ -80,29 +80,29 @@ func Pipe() (*PipeReaderAt, *PipeWriterAt, error) {
 func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	trace("readat", off)
 	defer trace("successfully read:", off, string(p))
-	r.b.Lock()
+	r.f.Lock()
 	for {
-		if !r.b.readable(off, int64(len(p))) {
+		if !r.f.readable(off, int64(len(p))) {
 			select {
-			case <-r.b.eof:
+			case <-r.f.eof:
 				trace("EOF")
 			default:
-				r.b.Wait()
+				r.f.Wait()
 				continue
 			}
 		}
-		r.b.Unlock()
-		return r.b.File.ReadAt(p, off)
+		r.f.Unlock()
+		return r.f.File.ReadAt(p, off)
 	}
 }
 
 // It can also function as a io.Reader
 func (r *PipeReaderAt) Read(p []byte) (int, error) {
-	n, err := r.ReadAt(p, r.b.readeroff)
+	n, err := r.ReadAt(p, r.f.readeroff)
 	if err == nil {
-		r.b.Lock()
-		defer r.b.Unlock()
-		r.b.readeroff = r.b.readeroff + int64(n)
+		r.f.Lock()
+		defer r.f.Unlock()
+		r.f.readeroff = r.f.readeroff + int64(n)
 	}
 	return n, err
 }
@@ -110,10 +110,10 @@ func (r *PipeReaderAt) Read(p []byte) (int, error) {
 // Close will block until writer closes, then it will Close the temp file.
 func (r *PipeReaderAt) Close() error {
 	select {
-	case <-r.b.eof:
-		r.b.Lock()
-		defer r.b.Unlock()
-		return r.b.File.Close()
+	case <-r.f.eof:
+		r.f.Lock()
+		defer r.f.Unlock()
+		return r.f.File.Close()
 	}
 }
 
@@ -122,39 +122,39 @@ func (r *PipeReaderAt) Close() error {
 func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 	trace("writeat: ", string(p), off)
 	defer trace("wrote: ", string(p), off)
-	n, err := w.b.File.WriteAt(p, off)
-	w.b.Lock()
-	defer w.b.Unlock()
-	if off == w.b.endln {
-		w.b.endln = w.b.endln + int64(n)
+	n, err := w.f.File.WriteAt(p, off)
+	w.f.Lock()
+	defer w.f.Unlock()
+	if off == w.f.endln {
+		w.f.endln = w.f.endln + int64(n)
 		newtip := 0
-		for i, s := range w.b.ahead {
-			if s.start == w.b.endln {
-				w.b.endln = s.end
+		for i, s := range w.f.ahead {
+			if s.start == w.f.endln {
+				w.f.endln = s.end
 				newtip = i + 1
 			}
 		}
 		if newtip > 0 { // clean up ahead queue
-			w.b.ahead = append(w.b.ahead[:0], w.b.ahead[newtip:]...)
+			w.f.ahead = append(w.f.ahead[:0], w.f.ahead[newtip:]...)
 		}
-		w.b.Broadcast()
+		w.f.Broadcast()
 	} else {
 		// XXX should be limit on ahead's length
-		w.b.ahead = append(w.b.ahead, span{off, off + int64(n)})
-		sort.Sort(w.b.ahead)
+		w.f.ahead = append(w.f.ahead, span{off, off + int64(n)})
+		sort.Sort(w.f.ahead)
 	}
-	// trace(w.b.ahead)
+	// trace(w.f.ahead)
 	return n, err
 }
 
 // Write provides a standard io.Writer interface.
 func (w *PipeWriterAt) Write(p []byte) (int, error) {
-	n, err := w.b.Write(p)
+	n, err := w.f.Write(p)
 	if err == nil {
-		w.b.Lock()
-		defer w.b.Unlock()
-		w.b.endln += int64(n)
-		w.b.Broadcast()
+		w.f.Lock()
+		defer w.f.Unlock()
+		w.f.endln += int64(n)
+		w.f.Broadcast()
 	}
 	return n, err
 }
@@ -162,10 +162,10 @@ func (w *PipeWriterAt) Write(p []byte) (int, error) {
 // Close on the writer will let the reader know that writing is complete. Once
 // the reader catches up it will continue to return 0 bytes and an EOF error.
 func (w *PipeWriterAt) Close() error {
-	w.b.Lock()
-	defer w.b.Unlock()
-	close(w.b.eof)
-	w.b.Broadcast()
+	w.f.Lock()
+	defer w.f.Unlock()
+	close(w.f.eof)
+	w.f.Broadcast()
 	return nil
 }
 
