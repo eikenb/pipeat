@@ -59,8 +59,13 @@ func slowdown(i int) time.Duration {
 	return time.Duration(i * 13)
 }
 
+type readers interface {
+	io.Reader
+	io.ReaderAt
+}
+
 type reader struct {
-	r           io.ReaderAt
+	r           readers
 	wg          *sync.WaitGroup
 	delay       int
 	dest        chan chunk
@@ -68,7 +73,7 @@ type reader struct {
 	*sync.Mutex // to protect buf
 }
 
-func newReader(r io.ReaderAt, wg *sync.WaitGroup, delay int) *reader {
+func newReader(r readers, wg *sync.WaitGroup, delay int) *reader {
 	return &reader{
 		r: r, wg: wg, delay: delay,
 		dest:  make(chan chunk, 1000), // big enough to hold all words
@@ -128,6 +133,25 @@ func simpleReader(t *testing.T, r *reader) {
 	}
 }
 
+func ioReader(t *testing.T, r *reader) {
+	defer r.wg.Done()
+	offset := 0
+	size := 10
+	for {
+		b := make([]byte, size)
+		n, err := r.r.Read(b)
+		if err != nil && err != io.EOF {
+			panic(err)
+		}
+		r.dest <- chunk{offset: int64(offset), word: b[:n]}
+		if n == 0 || err == io.EOF {
+			return
+		}
+		offset += n
+		time.Sleep(time.Millisecond * time.Duration(r.delay))
+	}
+}
+
 func ccReader(t *testing.T, r *reader, workers int) {
 	seg_size := int64((len(paragraph) / workers) + 1)
 	var sections = make([]*reader, workers)
@@ -154,6 +178,14 @@ func simpleWriter(t *testing.T, w *PipeWriterAt, delay int) {
 	for _, t := range chunkify(paragraph) {
 		time.Sleep(time.Millisecond * time.Duration(delay))
 		w.WriteAt(t.word, t.offset)
+	}
+	w.Close()
+}
+
+func ioWriter(t *testing.T, w *PipeWriterAt, delay int) {
+	for _, t := range chunkify(paragraph) {
+		time.Sleep(time.Millisecond * time.Duration(delay))
+		w.Write(t.word)
 	}
 	w.Close()
 }
@@ -257,7 +289,7 @@ func TestSimpleWrite(t *testing.T) {
 	reader := newReader(r, wg, 0)
 	go simpleReader(t, reader)
 	// Writer
-	go simpleWriter(t, w, 1)
+	go simpleWriter(t, w, 0)
 	wg.Wait()
 	r.Close()
 	trace(reader.String())
@@ -273,7 +305,7 @@ func TestReverseWrite(t *testing.T) {
 	wg.Add(1)
 	reader := newReader(r, wg, 0)
 	go simpleReader(t, reader)
-	go reverseWriter(t, w, 1)
+	go reverseWriter(t, w, 0)
 	wg.Wait()
 	r.Close()
 	trace(reader.String())
@@ -294,5 +326,41 @@ func TestRandomWrite(t *testing.T) {
 	wg.Wait()
 	r.Close()
 	trace(reader.String(), len(reader.String()))
+	assert.Equal(t, reader.String(), paragraph)
+}
+
+// io.Read paired with concurrent writer
+func TestIoRead(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	workers := 4
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	reader := newReader(r, wg, 0)
+	go ioReader(t, reader)
+	go ccWriter(t, w, 0, workers)
+	wg.Wait()
+	r.Close()
+	assert.Equal(t, reader.String(), paragraph)
+}
+
+// io.Writer paired wit concurrent reader
+func TestIoWrite(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	workers := 4
+
+	wg := &sync.WaitGroup{}
+	wg.Add(workers)
+	reader := newReader(r, wg, 0)
+	go ccReader(t, reader, workers)
+	go ioWriter(t, w, 0)
+	wg.Wait()
+	r.Close()
 	assert.Equal(t, reader.String(), paragraph)
 }

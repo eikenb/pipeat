@@ -32,6 +32,7 @@ type pipeFile struct {
 	endln      int64
 	ahead      spans
 	eof        chan struct{} // closed when all writes complete
+	readeroff  int64         // offset where Read() last read
 }
 
 func newPipeFile() (*pipeFile, error) {
@@ -95,6 +96,17 @@ func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	}
 }
 
+// It can also function as a io.Reader
+func (r *PipeReaderAt) Read(p []byte) (int, error) {
+	n, err := r.ReadAt(p, r.b.readeroff)
+	if err == nil {
+		r.b.Lock()
+		defer r.b.Unlock()
+		r.b.readeroff = r.b.readeroff + int64(n)
+	}
+	return n, err
+}
+
 // Close will block until writer closes, then it will Close the temp file.
 func (r *PipeReaderAt) Close() error {
 	select {
@@ -132,6 +144,18 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 		sort.Sort(w.b.ahead)
 	}
 	// trace(w.b.ahead)
+	return n, err
+}
+
+// Write provides a standard io.Writer interface.
+func (w *PipeWriterAt) Write(p []byte) (int, error) {
+	n, err := w.b.Write(p)
+	if err == nil {
+		w.b.Lock()
+		defer w.b.Unlock()
+		w.b.endln += int64(n)
+		w.b.Broadcast()
+	}
 	return n, err
 }
 
