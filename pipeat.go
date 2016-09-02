@@ -7,6 +7,7 @@ package pipeat
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"sort"
@@ -36,8 +37,9 @@ type pipeFile struct {
 	endln     int64
 	ahead     spans
 	readeroff int64 // offset where Read() last read
-	rerr      chan error
-	werr      chan error
+	rerr      error
+	werr      error
+	eof       chan struct{}
 }
 
 func newPipeFile() (*pipeFile, error) {
@@ -46,9 +48,7 @@ func newPipeFile() (*pipeFile, error) {
 		return nil, err
 	}
 	os.Remove(file.Name())
-	f := &pipeFile{File: file,
-		rerr: make(chan error),
-		werr: make(chan error)}
+	f := &pipeFile{File: file, eof: make(chan struct{})}
 	f.L = f.fileLock.RLocker() // Cond locker
 	return f, nil
 }
@@ -57,6 +57,30 @@ func (f *pipeFile) readable(start, end int64) bool {
 	f.dataLock.RLock()
 	defer f.dataLock.RUnlock()
 	return (start+end < f.endln)
+}
+
+func (f *pipeFile) readerror() error {
+	f.dataLock.RLock()
+	defer f.dataLock.RUnlock()
+	return f.rerr
+}
+
+func (f *pipeFile) setReaderror(err error) {
+	f.dataLock.Lock()
+	defer f.dataLock.Unlock()
+	f.rerr = err
+}
+
+func (f *pipeFile) writeerror() error {
+	f.dataLock.RLock()
+	defer f.dataLock.RUnlock()
+	return f.werr
+}
+
+func (f *pipeFile) setWriteerror(err error) {
+	f.dataLock.Lock()
+	defer f.dataLock.Unlock()
+	f.werr = err
 }
 
 // io.WriterAt side of pipe.
@@ -89,24 +113,29 @@ func Pipe() (*PipeReaderAt, *PipeWriterAt, error) {
 func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	trace("readat", off)
 	defer trace("successfully read:", off, string(p))
+
 	r.f.fileLock.RLock()
 	defer r.f.fileLock.RUnlock()
 	for {
+		if err := r.f.readerror(); err != nil {
+			return 0, err
+		}
+
 		if !r.f.readable(off, int64(len(p))) {
 			select {
-			case err := <-r.f.rerr:
-				if err == nil {
-					err = ErrClosedPipe
-				}
-				return 0, err
-			case <-r.f.werr:
-				// writer closed
+			case <-r.f.eof:
+				trace("eof")
 			default:
 				r.f.Wait()
 				continue
 			}
 		}
 		n, err := r.f.File.ReadAt(p, off)
+		if err != nil {
+			if werr := r.f.writeerror(); werr != nil {
+				err = werr
+			}
+		}
 		return n, err
 	}
 }
@@ -124,9 +153,17 @@ func (r *PipeReaderAt) Read(p []byte) (int, error) {
 
 // Close will block until writer closes, then it will Close the temp file.
 func (r *PipeReaderAt) Close() error {
+	return r.CloseWithError(nil)
+}
+
+//
+func (r *PipeReaderAt) CloseWithError(err error) error {
+	if err == nil {
+		err = ErrClosedPipe
+	}
+	r.f.setReaderror(err)
 	r.f.fileLock.Lock()
 	defer r.f.fileLock.Unlock()
-	close(r.f.rerr)
 	return r.f.File.Close()
 }
 
@@ -135,12 +172,23 @@ func (r *PipeReaderAt) Close() error {
 func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 	trace("writeat: ", string(p), off)
 	defer trace("wrote: ", string(p), off)
+
 	w.f.fileLock.RLock()
 	defer w.f.fileLock.RUnlock()
+	if err := w.f.writeerror(); err != nil {
+		return 0, err
+	}
 	n, err := w.f.File.WriteAt(p, off)
+	if err != nil {
+		if err := w.f.readerror(); err != nil {
+			return 0, err
+		}
+		return 0, ErrClosedPipe
+	}
 
 	w.f.dataLock.Lock()
 	defer w.f.dataLock.Unlock()
+
 	if off == w.f.endln {
 		w.f.endln = w.f.endln + int64(n)
 		newtip := 0
@@ -156,7 +204,7 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 		w.f.Broadcast()
 	} else {
 		w.f.ahead = append(w.f.ahead, span{off, off + int64(n)})
-		sort.Sort(w.f.ahead)
+		sort.Sort(w.f.ahead) // should already be sorted..
 	}
 	// trace(w.f.ahead)
 	return n, err
@@ -177,7 +225,15 @@ func (w *PipeWriterAt) Write(p []byte) (int, error) {
 // Close on the writer will let the reader know that writing is complete. Once
 // the reader catches up it will continue to return 0 bytes and an EOF error.
 func (w *PipeWriterAt) Close() error {
-	close(w.f.werr)
+	return w.CloseWithError(nil)
+}
+
+func (w *PipeWriterAt) CloseWithError(err error) error {
+	if err == nil {
+		err = io.EOF
+	}
+	w.f.setWriteerror(err)
+	close(w.f.eof)
 	w.f.Broadcast()
 	return nil
 }

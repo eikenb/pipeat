@@ -2,6 +2,7 @@ package pipeat
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"math/rand"
 	"strings"
@@ -363,4 +364,70 @@ func TestIoWrite(t *testing.T) {
 	wg.Wait()
 	r.Close()
 	assert.Equal(t, reader.String(), paragraph)
+}
+
+// test close
+func TestReadClose(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	r.Close()
+	b := make([]byte, 1)
+	n, err := r.ReadAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, ErrClosedPipe, err)
+	b = []byte("hi")
+	n, err = w.WriteAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, ErrClosedPipe, err)
+}
+
+func TestReadCloseWithError(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	test_err := errors.New("test error")
+	r.CloseWithError(test_err)
+	b := make([]byte, 1)
+	n, err := r.ReadAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, test_err, err)
+	b = []byte("hi")
+	n, err = w.WriteAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, test_err, err)
+}
+func TestWriteClose(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	w.Close()
+	b := []byte("hi")
+	n, err := w.WriteAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, io.EOF, err)
+	b = make([]byte, 1)
+	n, err = r.ReadAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, io.EOF, err)
+}
+
+func TestWriteCloseWithError(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	test_err := errors.New("test error")
+	w.CloseWithError(test_err)
+	b := []byte("hi")
+	n, err := w.WriteAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, test_err, err)
+	b = make([]byte, 1)
+	n, err = r.ReadAt(b, 10)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, test_err, err)
 }
