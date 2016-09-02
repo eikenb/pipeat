@@ -97,9 +97,7 @@ type PipeReaderAt struct {
 // expecting an io.ReaderAt with code expecting an io.WriterAt. Writes all go
 // to an unlinked temporary file, reads start up as the file gets written up to
 // their area. It is safe to call multiple ReadAt and WriteAt in parallel with
-// each other. Due to the asyncronous nature, Close needs to be called on the
-// writer first, then the reader. If you call Close on the reader first it will
-// block until the Writer's Close is called.
+// each other.
 func Pipe() (*PipeReaderAt, *PipeWriterAt, error) {
 	fp, err := newPipeFile()
 	if err != nil {
@@ -151,12 +149,13 @@ func (r *PipeReaderAt) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Close will block until writer closes, then it will Close the temp file.
+// Close will Close the temp file and subsequent writes or reads will return an
+// ErrClosePipe error.
 func (r *PipeReaderAt) Close() error {
 	return r.CloseWithError(nil)
 }
 
-//
+// CloseWithError sets error and otherwise behaves like Close.
 func (r *PipeReaderAt) CloseWithError(err error) error {
 	if err == nil {
 		err = ErrClosedPipe
@@ -228,6 +227,7 @@ func (w *PipeWriterAt) Close() error {
 	return w.CloseWithError(nil)
 }
 
+// CloseWithError sets the error and otherwise behaves like Close.
 func (w *PipeWriterAt) CloseWithError(err error) error {
 	if err == nil {
 		err = io.EOF
