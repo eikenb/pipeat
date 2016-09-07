@@ -125,7 +125,7 @@ func simpleReader(t *testing.T, r *reader) {
 			panic(err)
 		}
 		r.dest <- chunk{offset: int64(offset), word: b[:n]}
-		if n == 0 || err == io.EOF {
+		if err == io.EOF {
 			return
 		}
 		offset += n
