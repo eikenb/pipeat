@@ -5,7 +5,6 @@ package pipeat
 // the interfaces as well as allow for asyncronous writes.
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -13,8 +12,6 @@ import (
 	"sort"
 	"sync"
 )
-
-var ErrClosedPipe = errors.New("io: read/write on closed pipe")
 
 // Used to track write ahead areas of a file. That is, areas where there is a
 // gap in the file data earlier in the file. Possible with concurrent writes.
@@ -164,7 +161,7 @@ func (r *PipeReaderAt) Close() error {
 // CloseWithError sets error and otherwise behaves like Close.
 func (r *PipeReaderAt) CloseWithError(err error) error {
 	if err == nil {
-		err = ErrClosedPipe
+		err = io.EOF
 	}
 	r.f.setReaderror(err)
 	r.f.fileLock.Lock()
@@ -189,7 +186,7 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 		if err := w.f.readerror(); err != nil {
 			return 0, err
 		}
-		return 0, ErrClosedPipe
+		return 0, io.EOF
 	}
 
 	w.f.dataLock.Lock()
