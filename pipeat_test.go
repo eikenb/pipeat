@@ -289,6 +289,24 @@ func TestSimpleWrite(t *testing.T) {
 	assert.Equal(t, reader.String(), paragraph)
 }
 
+func TestWaitOnRead(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	reader := newReader(r, wg)
+	go func() {
+		time.Sleep(time.Millisecond)
+		simpleReader(t, reader)
+		r.Close()
+	}()
+	simpleWriter(t, w)
+	w.WaitForReader()
+	assert.Equal(t, reader.String(), paragraph)
+}
+
 func TestReverseWrite(t *testing.T) {
 	r, w, err := Pipe()
 	if err != nil {

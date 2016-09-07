@@ -39,7 +39,8 @@ type pipeFile struct {
 	readeroff int64 // offset where Read() last read
 	rerr      error
 	werr      error
-	eof       chan struct{}
+	eof       chan struct{} // end of file writes
+	eor       chan struct{} // end of reading
 }
 
 func newPipeFile() (*pipeFile, error) {
@@ -48,7 +49,9 @@ func newPipeFile() (*pipeFile, error) {
 		return nil, err
 	}
 	os.Remove(file.Name())
-	f := &pipeFile{File: file, eof: make(chan struct{})}
+	f := &pipeFile{File: file,
+		eof: make(chan struct{}),
+		eor: make(chan struct{})}
 	f.L = f.fileLock.RLocker() // Cond locker
 	return f, nil
 }
@@ -165,6 +168,7 @@ func (r *PipeReaderAt) CloseWithError(err error) error {
 	}
 	r.f.setReaderror(err)
 	r.f.fileLock.Lock()
+	close(r.f.eor)
 	defer r.f.fileLock.Unlock()
 	return r.f.File.Close()
 }
@@ -239,6 +243,13 @@ func (w *PipeWriterAt) CloseWithError(err error) error {
 	close(w.f.eof)
 	w.f.Broadcast()
 	return nil
+}
+
+// WaitForReader will block until the reader is closed. Returns the error set
+// when the reader closed.
+func (w *PipeWriterAt) WaitForReader() error {
+	<-w.f.eor
+	return w.f.readerror()
 }
 
 // debugging stuff
