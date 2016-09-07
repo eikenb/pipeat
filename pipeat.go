@@ -110,12 +110,12 @@ func Pipe() (*PipeReaderAt, *PipeWriterAt, error) {
 // ahead of the writer. You can call it from multiple threads.
 func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	trace("readat", off)
-	defer trace("successfully read:", off, string(p))
 
 	r.f.fileLock.RLock()
 	defer r.f.fileLock.RUnlock()
 	for {
 		if err := r.f.readerror(); err != nil {
+			trace("end readat:", off, 0, err)
 			return 0, err
 		}
 
@@ -134,18 +134,21 @@ func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 				err = werr
 			}
 		}
+		trace("end readat:", off, n, err)
 		return n, err
 	}
 }
 
 // It can also function as a io.Reader
 func (r *PipeReaderAt) Read(p []byte) (int, error) {
+	trace("read", len(p))
 	n, err := r.ReadAt(p, r.f.readeroff)
 	if err == nil {
 		r.f.dataLock.Lock()
 		defer r.f.dataLock.Unlock()
 		r.f.readeroff = r.f.readeroff + int64(n)
 	}
+	trace("end read", n, err)
 	return n, err
 }
 
