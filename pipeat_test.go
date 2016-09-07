@@ -76,7 +76,7 @@ type reader struct {
 func newReader(r readers, wg *sync.WaitGroup) *reader {
 	return &reader{
 		r: r, wg: wg,
-		dest:  make(chan chunk, 1000), // big enough to hold all words
+		dest:  make(chan chunk, 300), // big enough to hold all words
 		Mutex: &sync.Mutex{},
 	}
 }
