@@ -115,7 +115,7 @@ func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	defer r.f.fileLock.RUnlock()
 	for {
 		if err := r.f.readerror(); err != nil {
-			trace("end readat:", off, 0, err)
+			trace("end readat(1):", off, 0, err)
 			return 0, err
 		}
 
@@ -134,7 +134,7 @@ func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 				err = werr
 			}
 		}
-		trace("end readat:", off, n, err)
+		trace("end readat(2):", off, n, err)
 		return n, err
 	}
 }
