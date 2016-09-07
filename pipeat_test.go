@@ -67,109 +67,104 @@ type readers interface {
 
 type reader struct {
 	r           readers
-	wg          *sync.WaitGroup
-	dest        chan chunk
-	buf         *bytes.Buffer
+	buf         []byte
 	*sync.Mutex // to protect buf
 }
 
-func newReader(r readers, wg *sync.WaitGroup) *reader {
+func newReader(r readers) *reader {
 	return &reader{
-		r: r, wg: wg,
-		dest:  make(chan chunk, 300), // big enough to hold all words
+		r:     r,
 		Mutex: &sync.Mutex{},
 	}
 }
 
-func sectionReader(r *reader, wg *sync.WaitGroup, start, end int64) *reader {
+func sectionReader(r *reader, start, end int64) *reader {
 	section := io.NewSectionReader(r.r, start, end)
-	return newReader(section, wg)
+	return newReader(section)
 }
 
-func (r *reader) buffer() {
+func (r *reader) writeat(b []byte, off int) {
 	r.Lock()
 	defer r.Unlock()
-	if r.buf != nil {
-		return
+	// fmt.Println("reader writeat", len(b), off, string(b))
+	if off+len(b) < len(r.buf) {
+		copy(r.buf[off:], b)
+	} else if off == len(r.buf) {
+		r.buf = append(r.buf, b...)
+	} else {
+		ndata := make([]byte, off+len(b))
+		copy(ndata, r.buf)
+		copy(ndata[off:], b)
+		r.buf = ndata
 	}
-	var size int
-	parts := []chunk{}
-	close(r.dest)
-	for t := range r.dest {
-		parts = append(parts, t)
-		size += len(t.word)
-	}
-	trace("parts length:", len(parts))
-	result := make([]byte, size)
-	for _, t := range parts {
-		trace("--", t.offset, len(t.word), string(t.word))
-		start, end := t.offset, len(t.word)+int(t.offset)
-		copy(result[start:end], t.word)
-	}
-	r.buf = bytes.NewBuffer(result)
+}
+
+func (r *reader) close() {
 }
 
 func (r *reader) String() string {
-	r.buffer()
-	return r.buf.String()
+	r.Lock()
+	defer r.Unlock()
+	return string(r.buf)
+}
+
+type readat func([]byte, int64) (int, error)
+type write func([]byte, int)
+
+func basicReader(r readat, w write) {
+	offset := 0
+	size := 10
+	for {
+		b := make([]byte, size)
+		n, err := r(b, int64(offset))
+		w(b[:n], offset)
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			panic(err)
+		}
+		offset += n
+	}
 }
 
 func simpleReader(t *testing.T, r *reader) {
-	defer r.wg.Done()
-	offset := 0
-	size := 10
-	for {
-		b := make([]byte, size)
-		n, err := r.r.ReadAt(b, int64(offset))
-		if err != nil && err != io.EOF {
-			panic(err)
-		}
-		r.dest <- chunk{offset: int64(offset), word: b[:n]}
-		if err == io.EOF {
-			return
-		}
-		offset += n
-	}
+	defer r.r.(*PipeReaderAt).Close()
+	basicReader(r.r.ReadAt, r.writeat)
 }
 
 func ioReader(t *testing.T, r *reader) {
-	defer r.wg.Done()
-	offset := 0
-	size := 10
-	for {
-		b := make([]byte, size)
-		n, err := r.r.Read(b)
-		if err != nil && err != io.EOF {
-			panic(err)
-		}
-		r.dest <- chunk{offset: int64(offset), word: b[:n]}
-		if n == 0 || err == io.EOF {
-			return
-		}
-		offset += n
+	defer r.r.(*PipeReaderAt).Close()
+	read := func(b []byte, _ int64) (int, error) {
+		return r.r.Read(b)
 	}
+	basicReader(read, r.writeat)
 }
 
 func ccReader(t *testing.T, r *reader, workers int) {
+	defer r.r.(*PipeReaderAt).Close()
 	seg_size := int64((len(paragraph) / workers) + 1)
 	var sections = make([]*reader, workers)
 	var start, end int64
-	results_wg := &sync.WaitGroup{}
-	results_wg.Add(workers)
 	for i := 0; i < workers; i++ {
 		start, end = end, end+seg_size
-		sections[i] = sectionReader(r, results_wg, start, seg_size)
+		sections[i] = sectionReader(r, start, seg_size)
 	}
+	wg := &sync.WaitGroup{}
+	wg.Add(workers)
 	for i := 0; i < workers; i++ {
-		go simpleReader(t, sections[i])
+		go func(i int) {
+			s := sections[i]
+			basicReader(s.r.ReadAt, s.writeat)
+			wg.Done()
+		}(i)
 	}
-	results_wg.Wait()
-	r.buf = bytes.NewBuffer(nil)
+	wg.Wait()
+	buf := bytes.NewBuffer(nil)
 	for i := 0; i < workers; i++ {
-		sections[i].buffer()
-		r.buf.Write(sections[i].buf.Bytes())
-		r.wg.Done()
+		buf.Write(sections[i].buf)
 	}
+	r.writeat(buf.Bytes(), 0)
 }
 
 func simpleWriter(t *testing.T, w *PipeWriterAt) {
@@ -228,13 +223,10 @@ func TestCcWrite(t *testing.T) {
 	}
 	workers := 4
 
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go simpleReader(t, reader)
 	go ccWriter(t, w, workers)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
 }
 
@@ -245,13 +237,10 @@ func TestCcRead(t *testing.T) {
 	}
 	workers := 4
 
-	wg := &sync.WaitGroup{}
-	wg.Add(workers)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go ccReader(t, reader, workers)
 	go simpleWriter(t, w)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
 }
 
@@ -262,13 +251,10 @@ func TestCcRWrite(t *testing.T) {
 	}
 	workers := 4
 
-	wg := &sync.WaitGroup{}
-	wg.Add(workers)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go ccReader(t, reader, workers)
 	go ccWriter(t, w, workers)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
 }
 
@@ -277,14 +263,10 @@ func TestSimpleWrite(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go simpleReader(t, reader)
-	// Writer
 	go simpleWriter(t, w)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	trace(reader.String())
 	assert.Equal(t, reader.String(), paragraph)
 }
@@ -294,13 +276,10 @@ func TestWaitOnRead(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go func() {
 		time.Sleep(time.Millisecond)
 		simpleReader(t, reader)
-		r.Close()
 	}()
 	simpleWriter(t, w)
 	w.WaitForReader()
@@ -312,13 +291,10 @@ func TestReverseWrite(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go simpleReader(t, reader)
 	go reverseWriter(t, w)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	trace(reader.String())
 	assert.Equal(t, reader.String(), paragraph)
 }
@@ -329,13 +305,10 @@ func TestRandomWrite(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go simpleReader(t, reader)
 	go randomWriter(t, w)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	trace(reader.String(), len(reader.String()))
 	assert.Equal(t, reader.String(), paragraph)
 }
@@ -348,13 +321,10 @@ func TestIoRead(t *testing.T) {
 	}
 	workers := 4
 
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go ioReader(t, reader)
 	go ccWriter(t, w, workers)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
 }
 
@@ -366,13 +336,10 @@ func TestIoWrite(t *testing.T) {
 	}
 	workers := 4
 
-	wg := &sync.WaitGroup{}
-	wg.Add(workers)
-	reader := newReader(r, wg)
+	reader := newReader(r)
 	go ccReader(t, reader, workers)
 	go ioWriter(t, w)
-	wg.Wait()
-	r.Close()
+	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
 }
 
@@ -386,11 +353,11 @@ func TestReadClose(t *testing.T) {
 	b := make([]byte, 1)
 	n, err := r.ReadAt(b, 10)
 	assert.Equal(t, 0, n)
-	assert.Equal(t, ErrClosedPipe, err)
+	assert.Equal(t, io.EOF, err)
 	b = []byte("hi")
 	n, err = w.WriteAt(b, 10)
 	assert.Equal(t, 0, n)
-	assert.Equal(t, ErrClosedPipe, err)
+	assert.Equal(t, io.EOF, err)
 }
 
 func TestReadCloseWithError(t *testing.T) {
