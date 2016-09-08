@@ -56,10 +56,6 @@ func reverse(t []chunk) []chunk {
 	return t
 }
 
-func slowdown(i int) time.Duration {
-	return time.Duration(i * 13)
-}
-
 type readers interface {
 	io.Reader
 	io.ReaderAt
@@ -78,11 +74,6 @@ func newReader(r readers) *reader {
 	}
 }
 
-func sectionReader(r *reader, start, end int64) *reader {
-	section := io.NewSectionReader(r.r, start, end)
-	return newReader(section)
-}
-
 func (r *reader) writeat(b []byte, off int) {
 	r.Lock()
 	defer r.Unlock()
@@ -99,13 +90,15 @@ func (r *reader) writeat(b []byte, off int) {
 	}
 }
 
-func (r *reader) close() {
-}
-
 func (r *reader) String() string {
 	r.Lock()
 	defer r.Unlock()
 	return string(r.buf)
+}
+
+func sectionReader(r *reader, start, end int64) *reader {
+	section := io.NewSectionReader(r.r, start, end)
+	return newReader(section)
 }
 
 type readat func([]byte, int64) (int, error)
@@ -118,10 +111,10 @@ func basicReader(r readat, w write) {
 		b := make([]byte, size)
 		n, err := r(b, int64(offset))
 		w(b[:n], offset)
+		if err == io.EOF {
+			return
+		}
 		if err != nil {
-			if err == io.EOF {
-				return
-			}
 			panic(err)
 		}
 		offset += n
