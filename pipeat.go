@@ -41,7 +41,7 @@ type pipeFile struct {
 }
 
 func newPipeFile() (*pipeFile, error) {
-	file, err := ioutil.TempFile("", "test")
+	file, err := ioutil.TempFile("", "pipefile")
 	if err != nil {
 		return nil, err
 	}
