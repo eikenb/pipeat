@@ -183,7 +183,7 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 	}
 	n, err := w.f.File.WriteAt(p, off)
 	if err != nil {
-		if err := w.f.readerror(); err != nil {
+		if err = w.f.readerror(); err != nil {
 			return 0, err
 		}
 		return 0, io.EOF
