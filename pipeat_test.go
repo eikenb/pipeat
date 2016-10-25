@@ -369,24 +369,50 @@ func TestReadCloseWithError(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.Equal(t, test_err, err)
 }
+
 func TestWriteClose(t *testing.T) {
 	r, w, err := Pipe()
 	if err != nil {
 		panic(err)
 	}
-	w.Close()
+	go func() {
+		w.Close()
+	}()
+	<-w.f.eow // used to detect that close is done except block on reader
 	b := []byte("hi")
 	n, err := w.WriteAt(b, 10)
-	assert.Equal(t, 0, n)
+	assert.Equal(t, 0, n, "shouldn't have been able to write")
 	assert.Equal(t, io.EOF, err)
 	b = make([]byte, 1)
 	n, err = r.ReadAt(b, 10)
-	assert.Equal(t, 0, n)
+	assert.Equal(t, 0, n, "shouldn't have been able to read")
 	assert.Equal(t, io.EOF, err)
 }
 
 func TestWriteCloseWithError(t *testing.T) {
 	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	test_err := errors.New("test error")
+	go func() {
+		w.CloseWithError(test_err)
+	}()
+	<-w.f.eow // used to detect that close is done except block on reader
+	b := []byte("hi")
+	n, err := w.WriteAt(b, 10)
+	assert.Equal(t, 0, n, "shouldn't have been able to write")
+	assert.Equal(t, test_err, err)
+	b = make([]byte, 1)
+	n, err = r.ReadAt(b, 10)
+	assert.Equal(t, 0, n, "shouldn't have been able to read")
+	assert.Equal(t, test_err, err)
+	r.Close()
+}
+
+// same as above, but tests AsyncWriterPipe()
+func TestAsyncWriteCloseWithError(t *testing.T) {
+	r, w, err := AsyncWriterPipe()
 	if err != nil {
 		panic(err)
 	}
