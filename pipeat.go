@@ -36,7 +36,7 @@ type pipeFile struct {
 	readeroff int64 // offset where Read() last read
 	rerr      error
 	werr      error
-	eow       chan struct{} // end of file writes
+	eow       chan struct{} // end of writing
 	eor       chan struct{} // end of reading
 }
 
