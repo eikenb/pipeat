@@ -165,8 +165,8 @@ func (r *PipeReaderAt) CloseWithError(err error) error {
 	}
 	r.f.setReaderror(err)
 	r.f.fileLock.Lock()
-	close(r.f.eor)
 	defer r.f.fileLock.Unlock()
+	close(r.f.eor)
 	return r.f.File.Close()
 }
 
