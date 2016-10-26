@@ -4,6 +4,9 @@ package pipeat
 // ReaderAt and WriterAt. It uses a temp file as a buffer in order to implement
 // the interfaces as well as allow for asyncronous writes.
 
+// Author: John Eikenberry <jae@zhar.net>
+// License: CC0 <http://creativecommons.org/publicdomain/zero/1.0/>
+
 import (
 	"fmt"
 	"io"

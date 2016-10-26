@@ -1,5 +1,8 @@
 package pipeat
 
+// Author: John Eikenberry <jae@zhar.net>
+// License: CC0 <http://creativecommons.org/publicdomain/zero/1.0/>
+
 import (
 	"bytes"
 	"errors"
