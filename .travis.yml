@@ -1,0 +1,16 @@
+language: go
+go_import_path: github.com/eikenb/pipeat
+
+go:
+  - tip
+
+os:
+  - linux
+
+sudo: false
+
+install:
+  - go get -t -v .
+
+script:
+  - go test -v .
