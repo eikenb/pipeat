@@ -43,8 +43,8 @@ type pipeFile struct {
 	eor       chan struct{} // end of reading
 }
 
-func newPipeFile() (*pipeFile, error) {
-	file, err := ioutil.TempFile("", "pipefile")
+func newPipeFile(dirPath string) (*pipeFile, error) {
+	file, err := ioutil.TempFile(dirPath, "pipefile")
 	if err != nil {
 		return nil, err
 	}
@@ -106,18 +106,30 @@ type PipeReaderAt struct {
 // their area. It is safe to call multiple ReadAt and WriteAt in parallel with
 // each other.
 func Pipe() (*PipeReaderAt, *PipeWriterAt, error) {
-	return newPipe(false)
+	return PipeInDir("")
+}
+
+// PipeInDir just like Pipe but the temporary file is created inside the specified
+// directory
+func PipeInDir(dirPath string) (*PipeReaderAt, *PipeWriterAt, error) {
+	return newPipe(dirPath, false)
 }
 
 // AsyncWriterPipe is just like Pipe but the writer is allowed to close before
 // the reader is finished. Whereas in Pipe the writer blocks until the reader
 // is done.
 func AsyncWriterPipe() (*PipeReaderAt, *PipeWriterAt, error) {
-	return newPipe(true)
+	return AsyncWriterPipeInDir("")
 }
 
-func newPipe(asyncWriter bool) (*PipeReaderAt, *PipeWriterAt, error) {
-	fp, err := newPipeFile()
+// AsyncWriterPipeInDir is just like AsyncWriterPipe but the temporary file is created
+// inside the specified directory
+func AsyncWriterPipeInDir(dirPath string) (*PipeReaderAt, *PipeWriterAt, error) {
+	return newPipe(dirPath, true)
+}
+
+func newPipe(dirPath string, asyncWriter bool) (*PipeReaderAt, *PipeWriterAt, error) {
+	fp, err := newPipeFile(dirPath)
 	if err != nil {
 		return nil, nil, err
 	}

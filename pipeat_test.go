@@ -430,3 +430,41 @@ func TestAsyncWriteCloseWithError(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.Equal(t, errTest, err)
 }
+
+func TestPipeInDir(t *testing.T) {
+	r, w, err := PipeInDir("")
+	if err != nil {
+		panic(err)
+	}
+	err = r.Close()
+	if err != nil {
+		panic(err)
+	}
+	err = w.Close()
+	if err != nil {
+		panic(err)
+	}
+	_, _, err = PipeInDir("invalid dir")
+	if err == nil {
+		panic("pipe in dir must file, the requested directory does not exists")
+	}
+}
+
+func TestAsyncPipeInDir(t *testing.T) {
+	r, w, err := AsyncWriterPipeInDir("")
+	if err != nil {
+		panic(err)
+	}
+	err = w.Close()
+	if err != nil {
+		panic(err)
+	}
+	err = r.Close()
+	if err != nil {
+		panic(err)
+	}
+	_, _, err = AsyncWriterPipeInDir("invalid dir")
+	if err == nil {
+		panic("async writer pipe in dir must file, the requested directory does not exists")
+	}
+}
