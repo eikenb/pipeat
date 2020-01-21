@@ -48,7 +48,10 @@ func newPipeFile() (*pipeFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	os.Remove(file.Name())
+	file, err = unlinkFile(file)
+	if err != nil {
+		return nil, err
+	}
 	f := &pipeFile{File: file,
 		eow: make(chan struct{}),
 		eor: make(chan struct{})}
