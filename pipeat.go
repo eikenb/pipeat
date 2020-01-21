@@ -86,13 +86,13 @@ func (f *pipeFile) setWriteerror(err error) {
 	f.werr = err
 }
 
-// io.WriterAt side of pipe.
+// PipeWriterAt is the io.WriterAt side of pipe.
 type PipeWriterAt struct {
-	f            *pipeFile
-	async_writer bool
+	f           *pipeFile
+	asyncWriter bool
 }
 
-// io.ReaderAt side of pipe.
+// PipeReaderAt is the io.ReaderAt side of pipe.
 type PipeReaderAt struct {
 	f *pipeFile
 }
@@ -106,18 +106,19 @@ func Pipe() (*PipeReaderAt, *PipeWriterAt, error) {
 	return newPipe(false)
 }
 
-// Just like Pipe but the writer is allowed to close before the reader is
-// finished. Whereas in Pipe the writer blocks until the reader is done.
+// AsyncWriterPipe is just like Pipe but the writer is allowed to close before
+// the reader is finished. Whereas in Pipe the writer blocks until the reader
+// is done.
 func AsyncWriterPipe() (*PipeReaderAt, *PipeWriterAt, error) {
 	return newPipe(true)
 }
 
-func newPipe(async_writer bool) (*PipeReaderAt, *PipeWriterAt, error) {
+func newPipe(asyncWriter bool) (*PipeReaderAt, *PipeWriterAt, error) {
 	fp, err := newPipeFile()
 	if err != nil {
 		return nil, nil, err
 	}
-	return &PipeReaderAt{fp}, &PipeWriterAt{fp, async_writer}, nil
+	return &PipeReaderAt{fp}, &PipeWriterAt{fp, asyncWriter}, nil
 }
 
 // ReadAt implements the standard ReaderAt interface. It blocks if it gets
@@ -254,7 +255,7 @@ func (w *PipeWriterAt) CloseWithError(err error) error {
 	close(w.f.eow)
 	// write is closed at this point, should I expose a way to check this?
 	w.f.Broadcast()
-	if !w.async_writer {
+	if !w.asyncWriter {
 		w.WaitForReader()
 	}
 	return nil
