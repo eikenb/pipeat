@@ -468,3 +468,49 @@ func TestAsyncPipeInDir(t *testing.T) {
 		panic("async writer pipe in dir must file, the requested directory does not exists")
 	}
 }
+
+func TestUnlockWriteOnReaderClose(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	// the first write will succeed, the second one will remain blocked
+	// waiting for the reader, when the reader is closed waitForWritable
+	// returns and WriteAt can finish
+	errTest := errors.New("test error")
+	b := []byte("hi")
+	n, err := w.WriteAt(b, 0)
+	assert.Equal(t, len(b), n)
+	assert.Equal(t, nil, err)
+	go func() {
+		r.CloseWithError(errTest)
+	}()
+	// this write will be unlocked when close ends
+	n, err = w.WriteAt(b, 5)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, errTest, err)
+	w.Close()
+}
+
+func TestUnlockWriteOnWriterClose(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	// the first write will succeed, the second one will remain blocked
+	// waiting for the reader, when the writer is closed waitForWritable
+	// returns and WriteAt can finish
+	errTest := errors.New("test error")
+	b := []byte("hi")
+	n, err := w.WriteAt(b, 0)
+	assert.Equal(t, len(b), n)
+	assert.Equal(t, nil, err)
+	go func() {
+		w.CloseWithError(errTest)
+	}()
+	// this write will be unlocked when close ends
+	n, err = w.WriteAt(b, 5)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, errTest, err)
+	r.Close()
+}

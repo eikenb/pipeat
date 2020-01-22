@@ -32,11 +32,14 @@ func (c spans) Less(i, j int) bool { return c[i].start < c[j].start }
 type pipeFile struct {
 	*os.File
 	fileLock  sync.RWMutex
-	sync.Cond              // used to signal readers from writers
+	rCond     sync.Cond    // used to signal readers from writers
+	wCond     sync.Cond    // used to signal writers from readers in sync mode
 	dataLock  sync.RWMutex // serialize access to meta data (below)
+	syncMode  bool         // if true the writer is only allowed to write until the reader requested
 	endln     int64
 	ahead     spans
 	readeroff int64 // offset where Read() last read
+	writeroff int64 // file offset allowed for the writer in sync mode
 	rerr      error
 	werr      error
 	eow       chan struct{} // end of writing
@@ -55,14 +58,31 @@ func newPipeFile(dirPath string) (*pipeFile, error) {
 	f := &pipeFile{File: file,
 		eow: make(chan struct{}),
 		eor: make(chan struct{})}
-	f.L = f.fileLock.RLocker() // Cond locker
+	f.rCond.L = f.dataLock.RLocker() // Readers cond locker
+	f.wCond.L = f.dataLock.RLocker() // Writers cond locker
 	return f, nil
 }
 
-func (f *pipeFile) readable(start, end int64) bool {
+// waitForReadable waits until the requested data is available to read.
+// We can stop waiting if the writer ended or if the reader is closed.
+// The reader can be closed using Close() or CloseWithError we don't
+// want to wait on a closed reader
+func (f *pipeFile) waitForReadable(off int64) {
 	f.dataLock.RLock()
 	defer f.dataLock.RUnlock()
-	return (start+end < f.endln)
+L:
+	for off >= f.endln {
+		select {
+		case <-f.eow:
+			trace("eow")
+			break L
+		case <-f.eor:
+			trace("eor")
+			break L
+		default:
+			f.rCond.Wait()
+		}
+	}
 }
 
 func (f *pipeFile) readerror() error {
@@ -75,6 +95,34 @@ func (f *pipeFile) setReaderror(err error) {
 	f.dataLock.Lock()
 	defer f.dataLock.Unlock()
 	f.rerr = err
+	close(f.eor)
+	f.rCond.Broadcast()
+	f.wCond.Broadcast()
+}
+
+// waitForWritable don't allow to write more than the reader requested.
+// If the pipe is not in sync mode it does nothing.
+// We can stop waiting it the reader need more data or if the reader or
+// the writer are closed
+func (f *pipeFile) waitForWritable() {
+	if !f.syncMode {
+		return
+	}
+	f.dataLock.RLock()
+	defer f.dataLock.RUnlock()
+L:
+	for f.endln > f.writeroff {
+		select {
+		case <-f.eow:
+			trace("eow")
+			break L
+		case <-f.eor:
+			trace("eor")
+			break L
+		default:
+			f.wCond.Wait()
+		}
+	}
 }
 
 func (f *pipeFile) writeerror() error {
@@ -87,6 +135,23 @@ func (f *pipeFile) setWriteerror(err error) {
 	f.dataLock.Lock()
 	defer f.dataLock.Unlock()
 	f.werr = err
+	close(f.eow)
+	f.rCond.Broadcast()
+	f.wCond.Broadcast()
+}
+
+// set the new allowed write offset and signal the writers.
+// Do nothing if not in sync mode
+func (f *pipeFile) setWriteoff(off int64) {
+	if !f.syncMode {
+		return
+	}
+	f.dataLock.Lock()
+	defer f.dataLock.Unlock()
+	if off > f.writeroff {
+		f.writeroff = off
+		f.wCond.Broadcast()
+	}
 }
 
 // PipeWriterAt is the io.WriterAt side of pipe.
@@ -133,6 +198,7 @@ func newPipe(dirPath string, asyncWriter bool) (*PipeReaderAt, *PipeWriterAt, er
 	if err != nil {
 		return nil, nil, err
 	}
+	fp.syncMode = !asyncWriter
 	return &PipeReaderAt{fp}, &PipeWriterAt{fp, asyncWriter}, nil
 }
 
@@ -141,32 +207,25 @@ func newPipe(dirPath string, asyncWriter bool) (*PipeReaderAt, *PipeWriterAt, er
 func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	trace("readat", off)
 
+	r.f.setWriteoff(off + int64(len(p)))
+	r.f.waitForReadable(off + int64(len(p)))
+
 	r.f.fileLock.RLock()
 	defer r.f.fileLock.RUnlock()
-	for {
-		if err := r.f.readerror(); err != nil {
-			trace("end readat(1):", off, 0, err)
-			return 0, err
-		}
 
-		if !r.f.readable(off, int64(len(p))) {
-			select {
-			case <-r.f.eow:
-				trace("eow")
-			default:
-				r.f.Wait()
-				continue
-			}
-		}
-		n, err := r.f.File.ReadAt(p, off)
-		if err != nil {
-			if werr := r.f.writeerror(); werr != nil {
-				err = werr
-			}
-		}
-		trace("end readat(2):", off, n, err)
-		return n, err
+	if err := r.f.readerror(); err != nil {
+		trace("end readat(1):", off, 0, err)
+		return 0, err
 	}
+
+	n, err := r.f.File.ReadAt(p, off)
+	if err != nil {
+		if werr := r.f.writeerror(); werr != nil {
+			err = werr
+		}
+	}
+	trace("end readat(2):", off, n, err)
+	return n, err
 }
 
 // It can also function as a io.Reader
@@ -193,10 +252,9 @@ func (r *PipeReaderAt) CloseWithError(err error) error {
 	if err == nil {
 		err = io.EOF
 	}
-	r.f.setReaderror(err)
 	r.f.fileLock.Lock()
 	defer r.f.fileLock.Unlock()
-	close(r.f.eor)
+	r.f.setReaderror(err)
 	return r.f.File.Close()
 }
 
@@ -206,8 +264,11 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 	trace("writeat: ", string(p), off)
 	defer trace("wrote: ", string(p), off)
 
+	w.f.waitForWritable()
+
 	w.f.fileLock.RLock()
 	defer w.f.fileLock.RUnlock()
+
 	if err := w.f.writeerror(); err != nil {
 		return 0, err
 	}
@@ -234,7 +295,7 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 		if newtip > 0 { // clean up ahead queue
 			w.f.ahead = append(w.f.ahead[:0], w.f.ahead[newtip:]...)
 		}
-		w.f.Broadcast()
+		w.f.rCond.Broadcast()
 	} else {
 		w.f.ahead = append(w.f.ahead, span{off, off + int64(n)})
 		sort.Sort(w.f.ahead) // should already be sorted..
@@ -245,12 +306,15 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 
 // Write provides a standard io.Writer interface.
 func (w *PipeWriterAt) Write(p []byte) (int, error) {
+	w.f.waitForWritable()
+	w.f.fileLock.RLock()
+	defer w.f.fileLock.RUnlock()
 	n, err := w.f.Write(p)
 	if err == nil {
 		w.f.dataLock.Lock()
 		defer w.f.dataLock.Unlock()
 		w.f.endln += int64(n)
-		w.f.Broadcast()
+		w.f.rCond.Broadcast()
 	}
 	return n, err
 }
@@ -267,9 +331,7 @@ func (w *PipeWriterAt) CloseWithError(err error) error {
 		err = io.EOF
 	}
 	w.f.setWriteerror(err)
-	close(w.f.eow)
 	// write is closed at this point, should I expose a way to check this?
-	w.f.Broadcast()
 	if !w.asyncWriter {
 		w.WaitForReader()
 	}
