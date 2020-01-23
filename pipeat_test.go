@@ -224,6 +224,8 @@ func TestCcWrite(t *testing.T) {
 	go ccWriter(t, w, workers)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestCcRead(t *testing.T) {
@@ -238,6 +240,8 @@ func TestCcRead(t *testing.T) {
 	go simpleWriter(t, w)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestCcRWrite(t *testing.T) {
@@ -252,6 +256,8 @@ func TestCcRWrite(t *testing.T) {
 	go ccWriter(t, w, workers)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestSimpleWrite(t *testing.T) {
@@ -265,6 +271,8 @@ func TestSimpleWrite(t *testing.T) {
 	w.WaitForReader()
 	trace(reader.String())
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestWaitOnRead(t *testing.T) {
@@ -280,6 +288,8 @@ func TestWaitOnRead(t *testing.T) {
 	simpleWriter(t, w)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestReverseWrite(t *testing.T) {
@@ -293,6 +303,8 @@ func TestReverseWrite(t *testing.T) {
 	w.WaitForReader()
 	trace(reader.String())
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestRandomWrite(t *testing.T) {
@@ -307,6 +319,8 @@ func TestRandomWrite(t *testing.T) {
 	w.WaitForReader()
 	trace(reader.String(), len(reader.String()))
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 // io.Read paired with concurrent writer
@@ -322,6 +336,8 @@ func TestIoRead(t *testing.T) {
 	go ccWriter(t, w, workers)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 // io.Writer paired wit concurrent reader
@@ -337,6 +353,8 @@ func TestIoWrite(t *testing.T) {
 	go ioWriter(t, w)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 // test close

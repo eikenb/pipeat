@@ -40,6 +40,8 @@ type pipeFile struct {
 	ahead     spans
 	readeroff int64 // offset where Read() last read
 	writeroff int64 // file offset allowed for the writer in sync mode
+	readed    int64 // size readed as bytes, useful for stats
+	written   int64 // size written as bytes, useful for stats
 	rerr      error
 	werr      error
 	eow       chan struct{} // end of writing
@@ -85,6 +87,12 @@ L:
 	}
 }
 
+func (f *pipeFile) updateReadedBytes(n int) {
+	f.dataLock.Lock()
+	defer f.dataLock.Unlock()
+	f.readed += int64(n)
+}
+
 func (f *pipeFile) readerror() error {
 	f.dataLock.RLock()
 	defer f.dataLock.RUnlock()
@@ -123,6 +131,12 @@ L:
 			f.wCond.Wait()
 		}
 	}
+}
+
+func (f *pipeFile) updateWrittenBytes(n int) {
+	f.dataLock.Lock()
+	defer f.dataLock.Unlock()
+	f.written += int64(n)
 }
 
 func (f *pipeFile) writeerror() error {
@@ -219,6 +233,7 @@ func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	}
 
 	n, err := r.f.File.ReadAt(p, off)
+	r.f.updateReadedBytes(n)
 	if err != nil {
 		if werr := r.f.writeerror(); werr != nil {
 			err = werr
@@ -239,6 +254,13 @@ func (r *PipeReaderAt) Read(p []byte) (int, error) {
 	}
 	trace("end read", n, err)
 	return n, err
+}
+
+// GetReadedBytes returns the bytes readed
+func (r *PipeReaderAt) GetReadedBytes() int64 {
+	r.f.dataLock.RLock()
+	defer r.f.dataLock.RUnlock()
+	return r.f.readed
 }
 
 // Close will Close the temp file and subsequent writes or reads will return an
@@ -273,6 +295,7 @@ func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
 		return 0, err
 	}
 	n, err := w.f.File.WriteAt(p, off)
+	w.f.updateWrittenBytes(n)
 	if err != nil {
 		if err = w.f.readerror(); err != nil {
 			return 0, err
@@ -310,6 +333,7 @@ func (w *PipeWriterAt) Write(p []byte) (int, error) {
 	w.f.fileLock.RLock()
 	defer w.f.fileLock.RUnlock()
 	n, err := w.f.Write(p)
+	w.f.updateWrittenBytes(n)
 	if err == nil {
 		w.f.dataLock.Lock()
 		defer w.f.dataLock.Unlock()
@@ -317,6 +341,13 @@ func (w *PipeWriterAt) Write(p []byte) (int, error) {
 		w.f.rCond.Broadcast()
 	}
 	return n, err
+}
+
+// GetWrittenBytes returns the bytes written
+func (w *PipeWriterAt) GetWrittenBytes() int64 {
+	w.f.dataLock.RLock()
+	defer w.f.dataLock.RUnlock()
+	return w.f.written
 }
 
 // Close on the writer will let the reader know that writing is complete. Once
