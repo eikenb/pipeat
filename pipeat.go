@@ -283,8 +283,8 @@ func (r *PipeReaderAt) CloseWithError(err error) error {
 // WriteAt implements the standard WriterAt interface. It will write to the
 // temp file without blocking. You can call it from multiple threads.
 func (w *PipeWriterAt) WriteAt(p []byte, off int64) (int, error) {
-	trace("writeat: ", string(p), off)
-	defer trace("wrote: ", string(p), off)
+	//trace("writeat: ", string(p), off)
+	//defer trace("wrote: ", string(p), off)
 
 	w.f.waitForWritable()
 
