@@ -72,15 +72,15 @@ func newPipeFile(dirPath string) (*pipeFile, error) {
 func (f *pipeFile) waitForReadable(off int64) {
 	f.dataLock.RLock()
 	defer f.dataLock.RUnlock()
-L:
+
 	for off >= f.endln {
 		select {
 		case <-f.eow:
 			trace("eow")
-			break L
+			return
 		case <-f.eor:
 			trace("eor")
-			break L
+			return
 		default:
 			f.rCond.Wait()
 		}
@@ -118,15 +118,15 @@ func (f *pipeFile) waitForWritable() {
 	}
 	f.dataLock.RLock()
 	defer f.dataLock.RUnlock()
-L:
+
 	for f.endln > f.writeroff {
 		select {
 		case <-f.eow:
 			trace("eow")
-			break L
+			return
 		case <-f.eor:
 			trace("eor")
-			break L
+			return
 		default:
 			f.wCond.Wait()
 		}
