@@ -39,10 +39,10 @@ func chunkify(s string) []chunk {
 
 func segmentify(chunks []chunk, num int) [][]chunk {
 	segments := make([][]chunk, num)
-	seg_size := (len(chunks) / num) + 1
+	segSize := (len(chunks) / num) + 1
 	var start, end int
 	for i := 0; i < num; i++ {
-		start, end = end, end+seg_size
+		start, end = end, end+segSize
 		if end <= len(chunks) {
 			segments[i] = chunks[start:end]
 		} else {
@@ -139,12 +139,12 @@ func ioReader(t *testing.T, r *reader) {
 
 func ccReader(t *testing.T, r *reader, workers int) {
 	defer r.r.(*PipeReaderAt).Close()
-	seg_size := int64((len(paragraph) / workers) + 1)
+	segSize := int64((len(paragraph) / workers) + 1)
 	var sections = make([]*reader, workers)
 	var start, end int64
 	for i := 0; i < workers; i++ {
-		start, end = end, end+seg_size
-		sections[i] = sectionReader(r, start, seg_size)
+		start, end = end, end+segSize
+		sections[i] = sectionReader(r, start, segSize)
 	}
 	wg := &sync.WaitGroup{}
 	wg.Add(workers)
@@ -198,17 +198,17 @@ func randomWriter(t *testing.T, w *PipeWriterAt) {
 func ccWriter(t *testing.T, w *PipeWriterAt, workers int) {
 	chunks := chunkify(paragraph)
 	segments := segmentify(chunks, workers)
-	results_wg := &sync.WaitGroup{}
-	results_wg.Add(workers)
+	resultsWg := &sync.WaitGroup{}
+	resultsWg.Add(workers)
 	for i := 0; i < len(segments); i++ {
 		go func(j int, segment []chunk) {
 			for _, t := range segment {
 				w.WriteAt(t.word, t.offset)
 			}
-			results_wg.Done()
+			resultsWg.Done()
 		}(i, segments[i])
 	}
-	results_wg.Wait()
+	resultsWg.Wait()
 	w.Close()
 }
 
@@ -224,6 +224,8 @@ func TestCcWrite(t *testing.T) {
 	go ccWriter(t, w, workers)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestCcRead(t *testing.T) {
@@ -238,6 +240,8 @@ func TestCcRead(t *testing.T) {
 	go simpleWriter(t, w)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestCcRWrite(t *testing.T) {
@@ -252,6 +256,8 @@ func TestCcRWrite(t *testing.T) {
 	go ccWriter(t, w, workers)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestSimpleWrite(t *testing.T) {
@@ -265,6 +271,8 @@ func TestSimpleWrite(t *testing.T) {
 	w.WaitForReader()
 	trace(reader.String())
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestWaitOnRead(t *testing.T) {
@@ -280,6 +288,8 @@ func TestWaitOnRead(t *testing.T) {
 	simpleWriter(t, w)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestReverseWrite(t *testing.T) {
@@ -293,6 +303,8 @@ func TestReverseWrite(t *testing.T) {
 	w.WaitForReader()
 	trace(reader.String())
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 func TestRandomWrite(t *testing.T) {
@@ -307,6 +319,8 @@ func TestRandomWrite(t *testing.T) {
 	w.WaitForReader()
 	trace(reader.String(), len(reader.String()))
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 // io.Read paired with concurrent writer
@@ -322,6 +336,8 @@ func TestIoRead(t *testing.T) {
 	go ccWriter(t, w, workers)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 // io.Writer paired wit concurrent reader
@@ -337,6 +353,8 @@ func TestIoWrite(t *testing.T) {
 	go ioWriter(t, w)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
+	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
+	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
 }
 
 // test close
@@ -361,16 +379,16 @@ func TestReadCloseWithError(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	test_err := errors.New("test error")
-	r.CloseWithError(test_err)
+	errTest := errors.New("test error")
+	r.CloseWithError(errTest)
 	b := make([]byte, 1)
 	n, err := r.ReadAt(b, 10)
 	assert.Equal(t, 0, n)
-	assert.Equal(t, test_err, err)
+	assert.Equal(t, errTest, err)
 	b = []byte("hi")
 	n, err = w.WriteAt(b, 10)
 	assert.Equal(t, 0, n)
-	assert.Equal(t, test_err, err)
+	assert.Equal(t, errTest, err)
 }
 
 func TestWriteClose(t *testing.T) {
@@ -397,19 +415,19 @@ func TestWriteCloseWithError(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	test_err := errors.New("test error")
+	errTest := errors.New("test error")
 	go func() {
-		w.CloseWithError(test_err)
+		w.CloseWithError(errTest)
 	}()
 	<-w.f.eow // used to detect that close is done except block on reader
 	b := []byte("hi")
 	n, err := w.WriteAt(b, 10)
 	assert.Equal(t, 0, n, "shouldn't have been able to write")
-	assert.Equal(t, test_err, err)
+	assert.Equal(t, errTest, err)
 	b = make([]byte, 1)
 	n, err = r.ReadAt(b, 10)
 	assert.Equal(t, 0, n, "shouldn't have been able to read")
-	assert.Equal(t, test_err, err)
+	assert.Equal(t, errTest, err)
 	r.Close()
 }
 
@@ -419,14 +437,98 @@ func TestAsyncWriteCloseWithError(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	test_err := errors.New("test error")
-	w.CloseWithError(test_err)
+	errTest := errors.New("test error")
+	w.CloseWithError(errTest)
 	b := []byte("hi")
 	n, err := w.WriteAt(b, 10)
 	assert.Equal(t, 0, n)
-	assert.Equal(t, test_err, err)
+	assert.Equal(t, errTest, err)
 	b = make([]byte, 1)
 	n, err = r.ReadAt(b, 10)
 	assert.Equal(t, 0, n)
-	assert.Equal(t, test_err, err)
+	assert.Equal(t, errTest, err)
+}
+
+func TestPipeInDir(t *testing.T) {
+	r, w, err := PipeInDir("")
+	if err != nil {
+		panic(err)
+	}
+	err = r.Close()
+	if err != nil {
+		panic(err)
+	}
+	err = w.Close()
+	if err != nil {
+		panic(err)
+	}
+	_, _, err = PipeInDir("invalid dir")
+	if err == nil {
+		panic("pipe in dir must file, the requested directory does not exists")
+	}
+}
+
+func TestAsyncPipeInDir(t *testing.T) {
+	r, w, err := AsyncWriterPipeInDir("")
+	if err != nil {
+		panic(err)
+	}
+	err = w.Close()
+	if err != nil {
+		panic(err)
+	}
+	err = r.Close()
+	if err != nil {
+		panic(err)
+	}
+	_, _, err = AsyncWriterPipeInDir("invalid dir")
+	if err == nil {
+		panic("async writer pipe in dir must file, the requested directory does not exists")
+	}
+}
+
+func TestUnlockWriteOnReaderClose(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	// the first write will succeed, the second one will remain blocked
+	// waiting for the reader, when the reader is closed waitForWritable
+	// returns and WriteAt can finish
+	errTest := errors.New("test error")
+	b := []byte("hi")
+	n, err := w.WriteAt(b, 0)
+	assert.Equal(t, len(b), n)
+	assert.Equal(t, nil, err)
+	go func() {
+		r.CloseWithError(errTest)
+	}()
+	// this write will be unlocked when close ends
+	n, err = w.WriteAt(b, 5)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, errTest, err)
+	w.Close()
+}
+
+func TestUnlockWriteOnWriterClose(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	// the first write will succeed, the second one will remain blocked
+	// waiting for the reader, when the writer is closed waitForWritable
+	// returns and WriteAt can finish
+	errTest := errors.New("test error")
+	b := []byte("hi")
+	n, err := w.WriteAt(b, 0)
+	assert.Equal(t, len(b), n)
+	assert.Equal(t, nil, err)
+	go func() {
+		w.CloseWithError(errTest)
+	}()
+	// this write will be unlocked when close ends
+	n, err = w.WriteAt(b, 5)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, errTest, err)
+	r.Close()
 }
