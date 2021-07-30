@@ -247,7 +247,7 @@ func (r *PipeReaderAt) ReadAt(p []byte, off int64) (int, error) {
 func (r *PipeReaderAt) Read(p []byte) (int, error) {
 	trace("read", len(p))
 	n, err := r.ReadAt(p, r.f.readeroff)
-	if err == nil {
+	if n > 0 {
 		r.f.dataLock.Lock()
 		defer r.f.dataLock.Unlock()
 		r.f.readeroff = r.f.readeroff + int64(n)
@@ -334,7 +334,7 @@ func (w *PipeWriterAt) Write(p []byte) (int, error) {
 	defer w.f.fileLock.RUnlock()
 	n, err := w.f.Write(p)
 	w.f.updateWrittenBytes(n)
-	if err == nil {
+	if n > 0 {
 		w.f.dataLock.Lock()
 		defer w.f.dataLock.Unlock()
 		w.f.endln += int64(n)

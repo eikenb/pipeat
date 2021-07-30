@@ -336,8 +336,10 @@ func TestIoRead(t *testing.T) {
 	go ccWriter(t, w, workers)
 	w.WaitForReader()
 	assert.Equal(t, reader.String(), paragraph)
-	assert.Equal(t, r.GetReadedBytes(), int64(len(paragraph)))
-	assert.Equal(t, w.GetWrittenBytes(), int64(len(paragraph)))
+	assert.Equal(t, int64(len(paragraph)), r.GetReadedBytes())
+	assert.Equal(t, int64(len(paragraph)), w.GetWrittenBytes())
+	assert.Equal(t, int64(len(paragraph)), r.f.readeroff)
+	assert.Equal(t, int64(len(paragraph)), r.f.endln)
 }
 
 // io.Writer paired wit concurrent reader
