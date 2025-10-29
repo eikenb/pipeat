@@ -102,8 +102,11 @@ func (f *pipeFile) readerror() error {
 func (f *pipeFile) setReaderror(err error) {
 	f.dataLock.Lock()
 	defer f.dataLock.Unlock()
-	f.rerr = err
-	close(f.eor)
+
+	if f.rerr == nil {
+		f.rerr = err
+		close(f.eor)
+	}
 	f.rCond.Broadcast()
 	f.wCond.Broadcast()
 }
@@ -148,8 +151,11 @@ func (f *pipeFile) writeerror() error {
 func (f *pipeFile) setWriteerror(err error) {
 	f.dataLock.Lock()
 	defer f.dataLock.Unlock()
-	f.werr = err
-	close(f.eow)
+
+	if f.werr == nil {
+		f.werr = err
+		close(f.eow)
+	}
 	f.rCond.Broadcast()
 	f.wCond.Broadcast()
 }

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"math/rand"
 	"strings"
 	"sync"
@@ -533,4 +534,20 @@ func TestUnlockWriteOnWriterClose(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.Equal(t, errTest, err)
 	r.Close()
+}
+
+func TestDoubleClose(t *testing.T) {
+	r, w, err := Pipe()
+	if err != nil {
+		panic(err)
+	}
+	err = r.Close()
+	assert.NoError(t, err)
+	err = w.Close()
+	assert.NoError(t, err)
+
+	err = r.Close()
+	assert.ErrorIs(t, err, fs.ErrClosed)
+	err = w.Close()
+	assert.NoError(t, err)
 }
